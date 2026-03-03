@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ast_svm
-#SBATCH --time=24:00:00
+#SBATCH --partition=gpubase_bygpu_b5
+#SBATCH --time=23:00:00
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
