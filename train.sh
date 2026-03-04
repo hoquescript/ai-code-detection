@@ -9,10 +9,14 @@
 #SBATCH --output=logs/%x-%A_%a.out
 
 module load python scipy-stack
+VENV=$HOME/venvs/how-far-are-we
+
 source ~/venvs/how-far-are-we/bin/activate
 
 export HF_HOME=$HOME/.cache/huggingface
 export TRANSFORMERS_CACHE=$HF_HOME/transformers
+
+$VENV/bin/python -c "import torch; print(torch.__version__)"
 
 # Pick dataset based on array index
 if [ "$SLURM_ARRAY_TASK_ID" -eq 0 ]; then
@@ -21,4 +25,4 @@ else
   export DATA_CSV=data/python.csv
 fi
 
-python scripts/embeddings/main.py
+$VENV/bin/python scripts/embeddings/main.py
