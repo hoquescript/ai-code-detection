@@ -11,17 +11,15 @@ from transformers import AutoTokenizer, AutoModel
 from tree_sitter_languages import get_parser
 
 from sklearn.model_selection import (
-    StratifiedKFold,
+    PredefinedSplit,
     train_test_split,
     RandomizedSearchCV,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, f1_score, accuracy_score
-from scipy.stats import loguniform, randint
+from scipy.stats import loguniform
 
 
 # -----------------------------
@@ -138,7 +136,9 @@ def average_f1(y_true, y_pred) -> float:
     return (f1_h + f1_a) / 2.0
 
 
-def train_and_eval_classifier(X_train, y_train, X_test, y_test, seed: int = 42):
+def train_and_eval_classifier(
+    X_train, y_train, X_val, y_val, X_test, y_test, seed: int = 42
+):
     pipe = Pipeline(
         steps=[
             ("scaler", StandardScaler()),
@@ -157,18 +157,24 @@ def train_and_eval_classifier(X_train, y_train, X_test, y_test, seed: int = 42):
         },
     ]
 
+    X_search = np.vstack([X_train, X_val])
+    y_search = np.concatenate([y_train, y_val])
+    validation_fold = np.concatenate(
+        [np.full(len(y_train), -1, dtype=int), np.zeros(len(y_val), dtype=int)]
+    )
+
     search = RandomizedSearchCV(
         estimator=pipe,
         param_distributions=param_dist,
         n_iter=25,
         scoring="f1_macro",  # you can also optimize for custom Average-F1 with a scorer
-        cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=seed),
+        cv=PredefinedSplit(validation_fold),
         random_state=seed,
         n_jobs=-1,
         verbose=1,
     )
 
-    search.fit(X_train, y_train)
+    search.fit(X_search, y_search)
     best = search.best_estimator_
 
     y_pred = best.predict(X_test)
@@ -218,12 +224,19 @@ def main(
     X = embedder.embed_texts(texts, batch_size=16)
     y = np.array(labels)
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train_val, X_test, y_train_val, y_test = train_test_split(
         X, y, test_size=0.10, random_state=seed, stratify=y
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train_val,
+        y_train_val,
+        test_size=1 / 9,
+        random_state=seed,
+        stratify=y_train_val,
     )
 
     best_model, report = train_and_eval_classifier(
-        X_train, y_train, X_test, y_test, seed=seed
+        X_train, y_train, X_val, y_val, X_test, y_test, seed=seed
     )
     return report
 
