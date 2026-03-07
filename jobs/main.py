@@ -8,8 +8,6 @@ from typing import List, Dict
 import torch
 from transformers import AutoTokenizer, AutoModel
 
-from tree_sitter_languages import get_parser
-
 from sklearn.model_selection import (
     PredefinedSplit,
     train_test_split,
@@ -25,6 +23,8 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 from scipy.stats import loguniform
+
+from scripts.utils.ast.ast_generator import generate_ast_sequence
 
 
 # -----------------------------
@@ -47,23 +47,8 @@ def safe_str(x):
 #    but this is a good starting point to reproduce the pipeline. [file:1]
 # -----------------------------
 def ast_preorder_types(code: str, language: str) -> str:
-    """
-    Returns a whitespace-separated sequence of node types from the Tree-sitter AST.
-    language: "python" (works), "java", "c" (should work if parser available).
-    """
-    parser = get_parser(language)
-    tree = parser.parse(code.encode("utf8"))
-    root = tree.root_node
-
-    tokens = []
-
-    def walk(node):
-        tokens.append(node.type)
-        for child in node.children:
-            walk(child)
-
-    walk(root)
-    return " ".join(tokens)
+    normalized_language = "cpp" if language == "c" else language
+    return generate_ast_sequence(code, normalized_language)
 
 
 # -----------------------------
