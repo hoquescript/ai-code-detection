@@ -8,16 +8,23 @@ from typing import List, Dict
 import torch
 from transformers import AutoTokenizer, AutoModel
 
-from tree_sitter_languages import get_parser
-
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.model_selection import (
+    PredefinedSplit,
+    train_test_split,
+    RandomizedSearchCV,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, f1_score, accuracy_score
-from scipy.stats import loguniform, randint
+from sklearn.metrics import (
+    classification_report,
+    f1_score,
+    accuracy_score,
+    confusion_matrix,
+)
+from scipy.stats import loguniform
+
+from scripts.utils.ast.ast_generator import generate_ast_sequence
 
 
 # -----------------------------
@@ -33,42 +40,25 @@ def safe_str(x):
     return "" if x is None else str(x)
 
 
-# -----------------------------
-# 1) AST serialization (AST Only)
-#    This is a simple preorder traversal of node types.
-#    The paper references a specific serialization from [42],
-#    but this is a good starting point to reproduce the pipeline. [file:1]
-# -----------------------------
 def ast_preorder_types(code: str, language: str) -> str:
-    """
-    Returns a whitespace-separated sequence of node types from the Tree-sitter AST.
-    language: "python" (works), "java", "c" (should work if parser available).
-    """
-    parser = get_parser(language)
-    tree = parser.parse(code.encode("utf8"))
-    root = tree.root_node
-
-    tokens = []
-
-    def walk(node):
-        tokens.append(node.type)
-        for child in node.children:
-            walk(child)
-
-    walk(root)
-    return " ".join(tokens)
+    normalized_language = "cpp" if language == "c" else language
+    return generate_ast_sequence(code, normalized_language)
 
 
 # -----------------------------
 # 2) Representations
 # -----------------------------
-SEP_TOKEN = "<CODESPLIT_ASTSEP>"  # "special separator token" idea [file:1]
+DEFAULT_SEP_TOKEN = "</s>"
 
 
-def make_representations(code: str, language: str) -> Dict[str, str]:
+def resolve_separator_token(tokenizer) -> str:
+    return tokenizer.sep_token or tokenizer.eos_token or DEFAULT_SEP_TOKEN
+
+
+def make_representations(code: str, language: str, sep_token: str) -> Dict[str, str]:
     code_only = code
     ast_only = ast_preorder_types(code, language)
-    combined = code_only + "\n" + SEP_TOKEN + "\n" + ast_only
+    combined = code_only + "\n" + sep_token + "\n" + ast_only
     return {"code": code_only, "ast": ast_only, "combined": combined}
 
 
@@ -82,15 +72,20 @@ class CodeEmbedder:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
     def __post_init__(self):
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModel.from_pretrained(self.model_name).to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name, trust_remote_code=True
+        )
+        self.separator_token = resolve_separator_token(self.tokenizer)
+        self.model = AutoModel.from_pretrained(
+            self.model_name, trust_remote_code=True
+        ).to(self.device)
         self.model.eval()
 
     @torch.no_grad()
     def embed_texts(self, texts: List[str], batch_size: int = 16) -> np.ndarray:
         """
-        Mean-pool last_hidden_state with attention mask.
-        Returns array shape (n, hidden_dim).
+        Extract normalized sequence embeddings from the CodeT5+ checkpoint.
+        Returns array shape (n, embed_dim).
         """
         all_vecs = []
 
@@ -104,16 +99,8 @@ class CodeEmbedder:
                 max_length=self.max_length,
             ).to(self.device)
 
-            out = self.model(**enc)
-            # out.last_hidden_state: (B, T, H)
-            last = out.last_hidden_state
-            mask = enc["attention_mask"].unsqueeze(-1)  # (B, T, 1)
-
-            summed = (last * mask).sum(dim=1)  # (B, H)
-            counts = mask.sum(dim=1).clamp(min=1)  # (B, 1)
-            mean_pooled = summed / counts
-
-            all_vecs.append(mean_pooled.detach().cpu().numpy())
+            embeddings = self.model(**enc)
+            all_vecs.append(embeddings.detach().cpu().numpy())
 
         return np.vstack(all_vecs)
 
@@ -134,68 +121,67 @@ def average_f1(y_true, y_pred) -> float:
     return (f1_h + f1_a) / 2.0
 
 
+def compute_paper_metrics(y_true, y_pred) -> Dict[str, float]:
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+    tpr = tp / (tp + fn) if (tp + fn) else 0.0
+    tnr = tn / (tn + fp) if (tn + fp) else 0.0
+    return {
+        "accuracy": accuracy_score(y_true, y_pred),
+        "tpr": tpr,
+        "tnr": tnr,
+        "avg_f1_custom": average_f1(y_true, y_pred),
+    }
+
+
 def train_and_eval_classifier(
-    X_train, y_train, X_test, y_test, model_kind: str = "svm", seed: int = 42
+    X_train, y_train, X_val, y_val, X_test, y_test, seed: int = 42
 ):
-    if model_kind == "svm":
-        pipe = Pipeline(
-            steps=[
-                ("scaler", StandardScaler()),
-                ("clf", SVC(probability=False)),
-            ]
-        )
-        param_dist = {
+    pipe = Pipeline(
+        steps=[
+            ("scaler", StandardScaler()),
+            ("clf", SVC(probability=False)),
+        ]
+    )
+    param_dist = [
+        {
+            "clf__kernel": ["linear"],
             "clf__C": loguniform(1e-3, 1e3),
-            "clf__kernel": ["rbf", "linear"],
+        },
+        {
+            "clf__kernel": ["rbf"],
+            "clf__C": loguniform(1e-3, 1e3),
             "clf__gamma": ["scale", "auto"],
-        }
-    elif model_kind == "logreg":
-        pipe = Pipeline(
-            steps=[
-                ("scaler", StandardScaler()),
-                ("clf", LogisticRegression(max_iter=5000)),
-            ]
-        )
-        param_dist = {
-            "clf__C": loguniform(1e-3, 1e3),
-            "clf__penalty": ["l2"],
-            "clf__solver": ["lbfgs"],
-        }
-    elif model_kind == "rf":
-        pipe = Pipeline(
-            steps=[
-                ("clf", RandomForestClassifier(random_state=seed)),
-            ]
-        )
-        param_dist = {
-            "clf__n_estimators": randint(100, 800),
-            "clf__max_depth": randint(2, 40),
-            "clf__min_samples_split": randint(2, 20),
-            "clf__min_samples_leaf": randint(1, 10),
-            "clf__max_features": ["sqrt", "log2", None],
-        }
-    else:
-        raise ValueError("model_kind must be one of: svm, logreg, rf")
+        },
+    ]
+
+    X_search = np.vstack([X_train, X_val])
+    y_search = np.concatenate([y_train, y_val])
+    validation_fold = np.concatenate(
+        [np.full(len(y_train), -1, dtype=int), np.zeros(len(y_val), dtype=int)]
+    )
 
     search = RandomizedSearchCV(
         estimator=pipe,
         param_distributions=param_dist,
         n_iter=25,
         scoring="f1_macro",  # you can also optimize for custom Average-F1 with a scorer
-        cv=5,
+        cv=PredefinedSplit(validation_fold),
         random_state=seed,
         n_jobs=-1,
         verbose=1,
     )
 
-    search.fit(X_train, y_train)
+    search.fit(X_search, y_search)
     best = search.best_estimator_
 
     y_pred = best.predict(X_test)
+    metrics = compute_paper_metrics(y_test, y_pred)
     report = {
         "best_params": search.best_params_,
-        "accuracy": accuracy_score(y_test, y_pred),
-        "avg_f1_custom": average_f1(y_test, y_pred),
+        "accuracy": metrics["accuracy"],
+        "tpr": metrics["tpr"],
+        "tnr": metrics["tnr"],
+        "avg_f1_custom": metrics["avg_f1_custom"],
         "f1_macro": f1_score(y_test, y_pred, average="macro"),
         "classification_report": classification_report(y_test, y_pred, digits=4),
     }
@@ -205,7 +191,7 @@ def train_and_eval_classifier(
 # -----------------------------
 # 5) End-to-end driver
 # -----------------------------
-def run_section3f(
+def main(
     df: pd.DataFrame,
     language_col: str = "language",
     code_col: str = "code",
@@ -222,6 +208,7 @@ def run_section3f(
     """
     set_seed(seed)
 
+    embedder = CodeEmbedder()
     texts = []
     labels = []
 
@@ -230,20 +217,26 @@ def run_section3f(
         code = safe_str(row[code_col])
         y = int(row[label_col])
 
-        reps = make_representations(code, lang)
+        reps = make_representations(code, lang, embedder.separator_token)
         texts.append(reps[representation])
         labels.append(y)
 
-    embedder = CodeEmbedder()
     X = embedder.embed_texts(texts, batch_size=16)
     y = np.array(labels)
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train_val, X_test, y_train_val, y_test = train_test_split(
         X, y, test_size=0.10, random_state=seed, stratify=y
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train_val,
+        y_train_val,
+        test_size=1 / 9,
+        random_state=seed,
+        stratify=y_train_val,
     )
 
     best_model, report = train_and_eval_classifier(
-        X_train, y_train, X_test, y_test, model_kind=model_kind, seed=seed
+        X_train, y_train, X_val, y_val, X_test, y_test, seed=seed
     )
     return report
 
@@ -265,8 +258,10 @@ if __name__ == "__main__":
         print("\n==============================")
         print(f"Representation = {rep}")
         print("==============================")
-        report = run_section3f(df, representation=rep, model_kind="svm")
+        report = main(df, representation=rep, model_kind="svm")
         print("Best params:", report["best_params"])
         print("Accuracy:", report["accuracy"])
+        print("TPR:", report["tpr"])
+        print("TNR:", report["tnr"])
         print("Average-F1 (custom):", report["avg_f1_custom"])
         print(report["classification_report"])
