@@ -23,7 +23,7 @@ pip install --no-index --no-cache \
   tree-sitter-cpp~=0.23.0 \
   tree-sitter-python~=0.25.0 \
   tree_sitter-java~=0.23.0 \
-  numpy pandas torch transformers scikit-learn scipy sentencepiece
+  numpy pandas torch "transformers==4.57.6" scikit-learn scipy sentencepiece
 
 export HF_HOME="$SCRATCH/hf_cache"
 export TRANSFORMERS_CACHE="$HF_HOME/transformers"

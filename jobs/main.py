@@ -88,8 +88,19 @@ class CodeEmbedder:
         Returns array shape (n, embed_dim).
         """
         all_vecs = []
+        n_batches = (len(texts) + batch_size - 1) // batch_size
+
+        print(
+            f"Embedding {len(texts)} samples on {self.device} "
+            f"in {n_batches} batches (batch_size={batch_size})",
+            flush=True,
+        )
 
         for i in range(0, len(texts), batch_size):
+            print(
+                f"Embedding batch {i // batch_size + 1}/{n_batches}",
+                flush=True,
+            )
             batch = texts[i : i + batch_size]
             enc = self.tokenizer(
                 batch,
@@ -221,7 +232,9 @@ def main(
         texts.append(reps[representation])
         labels.append(y)
 
-    X = embedder.embed_texts(texts, batch_size=16)
+    default_batch_size = 16 if embedder.device == "cuda" else 4
+    batch_size = int(os.environ.get("EMBED_BATCH_SIZE", str(default_batch_size)))
+    X = embedder.embed_texts(texts, batch_size=batch_size)
     y = np.array(labels)
 
     X_train_val, X_test, y_train_val, y_test = train_test_split(
