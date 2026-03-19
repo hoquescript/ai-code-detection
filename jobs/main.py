@@ -288,12 +288,12 @@ def main(
         stratify=y_train_val,
     )
 
-    # best_model, report = train_and_eval_classifier(
-    #     X_train, y_train, X_val, y_val, X_test, y_test, seed=seed
-    # )
-    best_model, report = train_and_eval_svm_only(
-        X_train, y_train, X_val, y_val, X_test, y_test
+    best_model, report = train_and_eval_classifier(
+        X_train, y_train, X_val, y_val, X_test, y_test, seed=seed
     )
+    # best_model, report = train_and_eval_svm_only(
+    #     X_train, y_train, X_val, y_val, X_test, y_test
+    # )
     return report
 
 
