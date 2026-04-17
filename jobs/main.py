@@ -22,6 +22,7 @@ from sklearn.metrics import (
     f1_score,
     accuracy_score,
     confusion_matrix,
+    roc_auc_score,
 )
 from scipy.stats import loguniform
 
@@ -133,16 +134,21 @@ def average_f1(y_true, y_pred) -> float:
     return (f1_h + f1_a) / 2.0
 
 
-def compute_paper_metrics(y_true, y_pred) -> Dict[str, float]:
+def compute_paper_metrics(
+    y_true, y_pred, y_score=None
+) -> Dict[str, float]:
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
     tpr = tp / (tp + fn) if (tp + fn) else 0.0
     tnr = tn / (tn + fp) if (tn + fp) else 0.0
-    return {
+    out = {
         "accuracy": accuracy_score(y_true, y_pred),
         "tpr": tpr,
         "tnr": tnr,
         "avg_f1_custom": average_f1(y_true, y_pred),
     }
+    if y_score is not None:
+        out["roc_auc"] = float(roc_auc_score(y_true, y_score))
+    return out
 
 
 def train_and_eval_classifier(
@@ -191,13 +197,15 @@ def train_and_eval_classifier(
     best = search.best_estimator_
 
     y_pred = best.predict(X_test)
-    metrics = compute_paper_metrics(y_test, y_pred)
+    y_score = best.decision_function(X_test)
+    metrics = compute_paper_metrics(y_test, y_pred, y_score=y_score)
     report = {
         "best_params": search.best_params_,
         "accuracy": metrics["accuracy"],
         "tpr": metrics["tpr"],
         "tnr": metrics["tnr"],
         "avg_f1_custom": metrics["avg_f1_custom"],
+        "roc_auc": metrics["roc_auc"],
         "f1_macro": f1_score(y_test, y_pred, average="macro"),
         "classification_report": classification_report(y_test, y_pred, digits=4),
     }
@@ -231,7 +239,8 @@ def train_and_eval_svm_only(
     pipe.fit(X_fit, y_fit)
 
     y_pred = pipe.predict(X_test)
-    metrics = compute_paper_metrics(y_test, y_pred)
+    y_score = pipe.decision_function(X_test)
+    metrics = compute_paper_metrics(y_test, y_pred, y_score=y_score)
     report = {
         "best_params": {
             "clf__kernel": kernel,
@@ -242,6 +251,7 @@ def train_and_eval_svm_only(
         "tpr": metrics["tpr"],
         "tnr": metrics["tnr"],
         "avg_f1_custom": metrics["avg_f1_custom"],
+        "roc_auc": metrics["roc_auc"],
         "f1_macro": f1_score(y_test, y_pred, average="macro"),
         "classification_report": classification_report(y_test, y_pred, digits=4),
     }
@@ -326,6 +336,7 @@ if __name__ == "__main__":
         print("TPR:", report["tpr"])
         print("TNR:", report["tnr"])
         print("Average-F1 (custom):", report["avg_f1_custom"])
+        print("ROC-AUC:", report["roc_auc"])
         print(report["classification_report"])
         print("--------------------------------")
         end_time = datetime.now()
