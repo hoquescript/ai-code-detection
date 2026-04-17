@@ -22,6 +22,7 @@ source "$SLURM_TMPDIR/ENV/bin/activate"
 pip install --no-index --upgrade pip
 pip install --no-index --no-cache \
   tree-sitter==0.25.2 \
+  tree-sitter-cpp~=0.23.0 \
   tree-sitter-python~=0.25.0 \
   tree_sitter-java~=0.23.0 \
   tree-sitter-typescript==0.23.2 \
