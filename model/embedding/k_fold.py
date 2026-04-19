@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from datetime import datetime
 
 
 from sklearn.model_selection import KFold
@@ -17,7 +18,7 @@ from sklearn.metrics import (
 )
 
 from scripts.utils.ast.ast_generator import generate_ast_sequence
-from .utils.helper import set_seed, safe_str
+from .utils.helper import set_seed, safe_str, save_snapshot
 from .utils.embedder import CodeEmbedder
 
 
@@ -51,6 +52,10 @@ def train(
     reports = {}
 
     for rep in representations:
+        print("_" * 80)
+        print(f'Representation: "{rep}"')
+        print("_" * 80)
+
         entities = (
             df["code"].str.lower() + "\n" + embedder.separator_token + "\n" + df["ast"]
             if rep == "combined"
@@ -64,7 +69,10 @@ def train(
         y_tests = []
         y_preds = []
         y_scores = []
-        for train_idx, validation_idx in kfold.split(X):
+        for i, (train_idx, validation_idx) in enumerate(kfold.split(X)):
+            print(
+                f"Started: fold {i + 1} of 10 at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
             X_train, X_test, y_train, y_test = (
                 X[train_idx],
                 X[validation_idx],
@@ -79,10 +87,19 @@ def train(
                 ]
             )
             pipe.fit(X_train, y_train)
+            save_snapshot(f"{rep}_{i}", pipe)
 
+            y_pred = pipe.predict(X_test)
+            y_score = pipe.decision_function(X_test)
             y_tests.append(y_test)
-            y_preds.append(pipe.predict(X_test))
-            y_scores.append(pipe.decision_function(X_test))
+            y_preds.append(y_pred)
+            y_scores.append(y_score)
+
+            print(get_report(y_test, y_pred, y_score))
+            print(
+                f"Completed: fold {i + 1} of 10 at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            print("-" * 20)
 
         reports[rep] = get_report(
             np.concatenate(y_tests), np.concatenate(y_preds), np.concatenate(y_scores)
