@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import KFold
 
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -22,15 +22,13 @@ from .utils.embedder import CodeEmbedder
 
 
 def get_report(y_true, y_pred, y_score=None):
-    f1_h = f1_score(y_true, y_pred, pos_label=1)
-    f1_a = f1_score(y_true, y_pred, pos_label=0)
     return {
         "accuracy": accuracy_score(y_true, y_pred),
         "confusion_matrix": confusion_matrix(y_true, y_pred),
         "precision": precision_score(y_true, y_pred),
         "recall": recall_score(y_true, y_pred),
-        "f1_score": f1_score(y_true, y_pred),
-        "custom_f1_score": (f1_h + f1_a) / 2.0,
+        "f1_score": f1_score(y_true, y_pred, average="binary"),
+        "average_f1_score": f1_score(y_true, y_pred, average="macro"),
         "roc/auc": roc_auc_score(y_true, y_score),
     }
 
@@ -42,6 +40,7 @@ def train(
 ):
     set_seed(seed)
     embedder = CodeEmbedder()
+    kfold = KFold(n_splits=10, shuffle=True, random_state=seed)
 
     # Parsing AST
     df["ast"] = [
@@ -59,31 +58,34 @@ def train(
         ).to_list()
 
         X = embedder.embed_texts(entities, batch_size=128)
-        y = df["label"]
+        y = df["label"].to_numpy()
 
-        X_train_val, X_test, y_train_val, y_test = train_test_split(
-            X, y, test_size=0.20, random_state=seed, stratify=y
-        )
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train_val,
-            y_train_val,
-            test_size=0.125,
-            random_state=seed,
-            stratify=y_train_val,
-        )
-        pipe = Pipeline(
-            steps=[
-                ("scaler", StandardScaler()),
-                ("clf", SVC(kernel="rbf", C=1.0, gamma="scale", probability=False)),
-            ]
-        )
+        # Collecting scores for each fold, We will aggregate it later
+        y_tests = []
+        y_preds = []
+        y_scores = []
+        for train_idx, validation_idx in kfold.split(X):
+            X_train, X_test, y_train, y_test = (
+                X[train_idx],
+                X[validation_idx],
+                y[train_idx],
+                y[validation_idx],
+            )
 
-        X_fit = np.vstack([X_train, X_val])
-        y_fit = np.concatenate([y_train, y_val])
-        pipe.fit(X_fit, y_fit)
+            pipe = Pipeline(
+                steps=[
+                    ("scaler", StandardScaler()),
+                    ("clf", SVC(kernel="rbf", C=1.0, gamma="scale", probability=False)),
+                ]
+            )
+            pipe.fit(X_train, y_train)
 
-        y_pred = pipe.predict(X_test)
-        y_score = pipe.decision_function(X_test)
-        reports[rep] = get_report(y_test, y_pred, y_score)
+            y_tests.append(y_test)
+            y_preds.append(pipe.predict(X_test))
+            y_scores.append(pipe.decision_function(X_test))
+
+        reports[rep] = get_report(
+            np.concatenate(y_tests), np.concatenate(y_preds), np.concatenate(y_scores)
+        )
 
     return reports
