@@ -1,5 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=embedding
+#SBATCH --partition=gpubase_bygpu_b5
+#SBATCH --gpus=h100:1
 #SBATCH --time=00:10:00
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=4G
