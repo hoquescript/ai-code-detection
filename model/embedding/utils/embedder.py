@@ -44,11 +44,8 @@ class CodeEmbedder:
         n_batches = (len(texts) + batch_size - 1) // batch_size
 
         print(
-            f"Embedding {len(texts)} samples on {self.device} "
-            f"in {n_batches} batches (batch_size={batch_size})",
-            flush=True,
+            f"Embedding {len(texts)} samples on {self.device} in {n_batches} batches (batch_size={batch_size})"
         )
-
         for i in range(0, len(texts), batch_size):
             print(
                 f"Embedding batch {i // batch_size + 1}/{n_batches}",
