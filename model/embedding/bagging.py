@@ -69,7 +69,12 @@ def train(
 
         print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.8, random_state=seed
+            X,
+            y,
+            test_size=0.8,
+            random_state=seed,
+            shuffle=True,
+            stratify=y,
         )
 
         pipe = Pipeline(

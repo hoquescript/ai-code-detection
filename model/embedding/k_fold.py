@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 
 
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
 
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -42,7 +42,9 @@ def train(
 ):
     set_seed(seed)
     embedder = CodeEmbedder()
-    kfold = KFold(n_splits=10, shuffle=True, random_state=seed)
+    kfold = StratifiedKFold(
+        n_splits=10, shuffle=True, random_state=seed, stratify=df["label"]
+    )
 
     # Parsing AST
     df["ast"] = [
