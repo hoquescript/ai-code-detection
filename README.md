@@ -1,0 +1,1 @@
+Class 0 means AI, Class 1 means Human.
