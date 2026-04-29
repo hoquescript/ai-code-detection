@@ -8,6 +8,7 @@ dependencies = [
     "deepagents>=0.5.4",
     "joblib>=1.5.3",
     "langchain>=1.2.15",
+    "langchain-huggingface>=1.2.2",
     "numpy>=2.4.4",
     "pandas>=3.0.2",
     "scikit-learn>=1.8.0",
